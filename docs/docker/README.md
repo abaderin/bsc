@@ -10,7 +10,7 @@ make docker
 If your build machine has an ARM-based chip, like Apple silicon (M1), the image is built for `linux/arm64` by default. To build for `x86_64`, apply the --platform arg:
 
 ```bash
-docker build --platform linux/amd64 -t bnb-chain/bsc -f Dockerfile .
+docker build --platform linux/amd64 -t bnb-chain/bsc -f Dockerfile.original .
 ```
 
 Before start the docker, get a copy of the config.toml & genesis.json from the release: https://github.com/bnb-chain/bsc/releases, and make necessary modification. `config.toml` & `genesis.json` should be mounted into `/bsc/config` inside the container. Assume `config.toml` & `genesis.json` are under `./config` in your current working directory, you can start your docker container with the following command:

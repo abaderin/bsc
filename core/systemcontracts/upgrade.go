@@ -739,6 +739,8 @@ func init() {
 }
 
 func UpgradeBuildInSystemContract(config *params.ChainConfig, blockNumber *big.Int, lastBlockTime uint64, blockTime uint64, statedb *state.StateDB) {
+	// что это за кусок говна?
+
 	if config == nil || blockNumber == nil || statedb == nil {
 		return
 	}
@@ -754,8 +756,11 @@ func UpgradeBuildInSystemContract(config *params.ChainConfig, blockNumber *big.I
 	default:
 		network = defaultNet
 	}
-
+	// почему то не помню чтоб видел эту строку в логах
+	// а она должна быть с каждым блоком
+	// а это просто контекст логгера, название логгера
 	logger := log.New("system-contract-upgrade", network)
+
 	if config.IsOnRamanujan(blockNumber) {
 		applySystemContractUpgrade(ramanujanUpgrade[network], blockNumber, statedb, logger)
 	}
@@ -815,7 +820,6 @@ func UpgradeBuildInSystemContract(config *params.ChainConfig, blockNumber *big.I
 	if config.IsOnHaberFix(blockNumber, lastBlockTime, blockTime) {
 		applySystemContractUpgrade(haberFixUpgrade[network], blockNumber, statedb, logger)
 	}
-
 	/*
 		apply other upgrades
 	*/

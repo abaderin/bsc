@@ -75,6 +75,7 @@ type Backend interface {
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	SubscribeChainSideEvent(ch chan<- core.ChainSideEvent) event.Subscription
 	GetBlobSidecars(ctx context.Context, hash common.Hash) (types.BlobSidecars, error)
+	CalcBlock(ctx context.Context, blockNumber uint64, account common.Address, token common.Address) (bool, error)
 
 	// Transaction pool API
 	SendTx(ctx context.Context, signedTx *types.Transaction) error

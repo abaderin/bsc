@@ -117,6 +117,7 @@ func suitableCallbacks(receiver reflect.Value) map[string]*callback {
 	callbacks := make(map[string]*callback)
 	for m := 0; m < typ.NumMethod(); m++ {
 		method := typ.Method(m)
+		log.Info("method detected:", "name", method.Name, "pkgPath", method.PkgPath)
 		if method.PkgPath != "" {
 			continue // method not exported
 		}

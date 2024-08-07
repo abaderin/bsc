@@ -37,9 +37,20 @@ import (
 //
 // StateProcessor implements Processor.
 type StateProcessor struct {
+	// скорее всего используется для получения информации о форк блоках, поскольку
+	// эти блоки включают новый функционал
+	// значительное количество форков так или иначе меняли логику вычисления газа за
+	// те или иные операции EVM
 	config *params.ChainConfig // Chain configuration options
-	bc     *BlockChain         // Canonical block chain
-	engine consensus.Engine    // Consensus engine used for block rewards
+
+	// структура данных которая рассматривает блокчейн целиком, а не как связанный
+	// список и включает в себя логику откатов и реорганизации к примеру
+	// простые методы включают возврат блока по хэшу, номеру, получение блока по номеру
+	// и в этой структуре так же присутствует ChainConfig - вот ведь говнокод
+	// можно было просто обращаться к bc.config и не создавать отдельное поле
+	bc *BlockChain // Canonical block chain
+
+	engine consensus.Engine // Consensus engine used for block rewards
 }
 
 // NewStateProcessor initialises a new StateProcessor.
@@ -59,6 +70,8 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
 func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (*state.StateDB, types.Receipts, []*types.Log, uint64, error) {
+	// хедер явно дает понять что просессится только блок - судя по всему у валидатора это будет пендинг блок
+	// до процессинга этот блок валидируется на черновую - транзакции проверяются на совсем уж грубые ошибки
 	var (
 		usedGas     = new(uint64)
 		header      = block.Header()
@@ -69,25 +82,43 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	)
 
 	var receipts = make([]*types.Receipt, 0)
+	// то есть блокчейн это уже давно не только блокчейн сам по себе - он по историческим причинам видимо включает
+	// в себя транзакции, поскольку их на самом деле также можно было бы хранить в отдельной структуре данных как
+	// receipts и logs
+	// а сам блокчейн должен был бы отвечать только за хеши и связь. то есть это как цепочка подписей, а не хранилище
+	// данных
 	// Mutate the block and state according to any hard-fork specs
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
+		// вот это нам точно нахуй не надо, оно отрабатывает в самом начале синхронизации блокчейна
 		misc.ApplyDAOHardFork(statedb)
 	}
 
+	// это ласт, то есть латест, а тот который мы обрабатываем - пендинг
 	lastBlock := p.bc.GetBlockByHash(block.ParentHash())
+	// логично
 	if lastBlock == nil {
 		return statedb, nil, nil, 0, errors.New("could not get parent block")
 	}
+
+	// не понимаю почему стоит такое условие
+	// наоборот же должно быть совпадение номера блока, а здесь условие которое должно работать
+	// по всем номерам кроме целевого
 	if !p.config.IsFeynman(block.Number(), block.Time()) {
 		// Handle upgrade build-in system contract code
 		systemcontracts.UpgradeBuildInSystemContract(p.config, blockNumber, lastBlock.Time(), block.Time(), statedb)
+	} else {
 	}
 
 	var (
+		// что за хуйня этот блок контекст?
+		// настройки евм исходя из блока
+		// я видел только настройки операций евм - то есть например сколько будет стоить
+		// операция с учетом цены газа
 		context = NewEVMBlockContext(header, p.bc, nil)
-		vmenv   = vm.NewEVM(context, vm.TxContext{}, statedb, p.config, cfg)
-		signer  = types.MakeSigner(p.config, header.Number, header.Time)
-		txNum   = len(block.Transactions())
+		// и потом создается евм с этим контекстом
+		vmenv  = vm.NewEVM(context, vm.TxContext{}, statedb, p.config, cfg)
+		signer = types.MakeSigner(p.config, header.Number, header.Time)
+		txNum  = len(block.Transactions())
 	)
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
 		ProcessBeaconBlockRoot(*beaconRoot, vmenv, statedb)
@@ -132,6 +163,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			bloomProcessors.Close()
 			return statedb, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
+
 		commonTxs = append(commonTxs, tx)
 		receipts = append(receipts, receipt)
 	}
@@ -159,6 +191,7 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 	// Create a new context to be used in the EVM environment.
 	txContext := NewEVMTxContext(msg)
 	evm.Reset(txContext, statedb)
+	statedb.Snapshot()
 
 	// Apply the transaction to the current state (included in the env).
 	result, err := ApplyMessage(evm, msg, gp)

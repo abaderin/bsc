@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"math/big"
 	"strings"
 	"time"
@@ -1274,6 +1275,139 @@ func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrO
 		return nil, newRevertError(result.Revert())
 	}
 	return result.Return(), result.Err
+}
+
+func (s *BlockChainAPI) CalcBlock(ctx context.Context, blockNumber uint64, account common.Address, token common.Address) (bool, error) {
+	block, err := s.b.BlockByNumber(ctx, rpc.BlockNumber(blockNumber))
+	if err != nil {
+		log.Error("failed to fetch block", "blockNumber", blockNumber, "err", err)
+		return false, err
+	}
+	log.Info("got block", "blockNumber", blockNumber, "blockHash", block.Hash())
+
+	previousBlockNumber := blockNumber - 1
+	previousBlock, err := s.b.BlockByNumber(ctx, rpc.BlockNumber(previousBlockNumber))
+	if err != nil {
+		log.Error("failed to fetch previous block", "blockNumber", previousBlockNumber, "err", err)
+		return false, err
+	}
+	log.Info("got previous block", "previousBlockNumber", previousBlockNumber, "previousBlockHash", previousBlock.Hash())
+
+	state, err := s.b.Chain().StateAt(previousBlock.Root())
+	if err != nil {
+		log.Error("failed to fetch state", "blockNumber", previousBlockNumber, "err", err)
+		return false, err
+	}
+	log.Info("got state", "stateRoot", previousBlock.Root())
+
+	// standard BEP20 balanceOf ABI
+	tokenABI, err := abi.JSON(strings.NewReader(
+		`[{"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"}]`,
+	))
+	log.Info("got tokenABI")
+	if err != nil {
+		log.Error("failed to parse token ABI", "err", err)
+		return false, err
+	}
+	balanceOfData, err := tokenABI.Pack("balanceOf", account)
+	if err != nil {
+		log.Error("failed to pack balanceOf", "err", err)
+		return false, err
+	}
+	log.Info("packed balanceOfData")
+	balanceOfDataBytes := hexutil.Bytes(balanceOfData)
+
+	// Call
+	//  ctx context.Context,
+	//  args TransactionArgs,
+	//  blockNrOrHash *rpc.BlockNumberOrHash,
+	//  overrides *StateOverride,
+	//  blockOverrides *BlockOverrides
+	//
+	previousBlockHeader := previousBlock.Header()
+	result, err := doCall(
+		ctx,
+		s.b, TransactionArgs{
+			To:   &token,
+			Data: &balanceOfDataBytes,
+		},
+		state,
+		previousBlockHeader,
+		nil,
+		nil,
+		s.b.RPCEVMTimeout(),
+		s.b.RPCGasCap(),
+	)
+	if err != nil {
+		log.Error("failed to tokenBalanceBefore doCall", "err", err)
+		return false, err
+	}
+	log.Info("tokenBalanceBefore doCall", "result", result)
+	tokenBalanceBeforeBytes := result.Return()
+
+	var tokenBalanceBefore *big.Int
+	err = tokenABI.UnpackIntoInterface(&tokenBalanceBefore, "balanceOf", tokenBalanceBeforeBytes)
+	if err != nil {
+		log.Error("failed to unpack balanceOf", "err", err)
+		return false, err
+	}
+	log.Info("tokenBalanceBefore", "tokenBalanceBefore", tokenBalanceBefore)
+
+	bnbBalanceBefore := state.GetBalance(account)
+	log.Info("bnbBalanceBefore", "bnbBalanceBefore", bnbBalanceBefore)
+
+	snapshot := state.Snapshot()
+	defer state.RevertToSnapshot(snapshot)
+
+	for _, tx := range block.Transactions() {
+		msg, _ := core.TransactionToMessage(tx, types.LatestSignerForChainID(s.b.ChainConfig().ChainID), nil)
+		_, err := core.ApplyMessage(
+			s.b.GetEVM(ctx, msg, state, previousBlock.Header(), nil, nil),
+			msg,
+			new(core.GasPool).AddGas(math.MaxUint64))
+		if err != nil {
+			log.Error("failed to apply message", "err", err)
+			return false, err
+		}
+	}
+
+	// doCall(
+	//  ctx context.Context,
+	//  b Backend,
+	//  args TransactionArgs,
+	//  state *state.StateDB,
+	//  header *types.Header,
+	//  overrides *StateOverride,
+	//  blockOverrides *BlockOverrides,
+	//  timeout time.Duration,
+	//  globalGasCap uint64)
+	result, err = doCall(
+		ctx,
+		s.b, TransactionArgs{
+			To:   &token,
+			Data: &balanceOfDataBytes,
+		},
+		state,
+		previousBlockHeader,
+		nil,
+		nil,
+		s.b.RPCEVMTimeout(),
+		s.b.RPCGasCap(),
+	)
+	if err != nil {
+		log.Error("failed to tokenBalanceAfter doCall", "err", err)
+		return false, err
+	}
+	tokenBalanceAfterBytes := result.Return()
+	var tokenBalanceAfter *big.Int
+	err = tokenABI.UnpackIntoInterface(&tokenBalanceAfter, "balanceOf", tokenBalanceAfterBytes)
+	if err != nil {
+		log.Error("failed to unpack balanceOf", "err", err)
+		return false, err
+	}
+	fmt.Printf("tokenBalanceAfter: %v\n", tokenBalanceAfter)
+
+	return false, nil
 }
 
 // DoEstimateGas returns the lowest possible gas limit that allows the transaction to run
