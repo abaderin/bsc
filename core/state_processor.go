@@ -19,6 +19,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -44,6 +45,7 @@ type StateProcessor struct {
 
 // NewStateProcessor initialises a new StateProcessor.
 func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consensus.Engine) *StateProcessor {
+	log.Info("NewStateProcessor initialized")
 	return &StateProcessor{
 		config: config,
 		bc:     bc,
@@ -59,6 +61,7 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
 func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (*state.StateDB, types.Receipts, []*types.Log, uint64, error) {
+	log.Info("StateProcess.Process called")
 	var (
 		usedGas     = new(uint64)
 		header      = block.Header()
@@ -71,7 +74,10 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	var receipts = make([]*types.Receipt, 0)
 	// Mutate the block and state according to any hard-fork specs
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
+		log.Info("Applying DAO hard-fork rules")
 		misc.ApplyDAOHardFork(statedb)
+	} else {
+		log.Info("No DAOForkSupport detected")
 	}
 
 	lastBlock := p.bc.GetBlockByHash(block.ParentHash())
@@ -79,8 +85,11 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		return statedb, nil, nil, 0, errors.New("could not get parent block")
 	}
 	if !p.config.IsFeynman(block.Number(), block.Time()) {
+		log.Info("Not Feynman block")
 		// Handle upgrade build-in system contract code
 		systemcontracts.UpgradeBuildInSystemContract(p.config, blockNumber, lastBlock.Time(), block.Time(), statedb)
+	} else {
+		log.Info("Feynman block")
 	}
 
 	var (
@@ -90,10 +99,15 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		txNum   = len(block.Transactions())
 	)
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
+		log.Info("Before ProcessBeaconBlockRoot call")
 		ProcessBeaconBlockRoot(*beaconRoot, vmenv, statedb)
 	}
 	// Iterate over and process the individual transactions
 	posa, isPoSA := p.engine.(consensus.PoSA)
+	switch posa_type := posa.(type) {
+	default:
+		log.Info("posa_type", "type", posa_type)
+	}
 	commonTxs := make([]*types.Transaction, 0, txNum)
 
 	// initialise bloom processors
@@ -105,10 +119,12 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 
 	for i, tx := range block.Transactions() {
 		if isPoSA {
+			log.Info("isPoSA = true")
 			if isSystemTx, err := posa.IsSystemTransaction(tx, block.Header()); err != nil {
 				bloomProcessors.Close()
 				return statedb, nil, nil, 0, err
 			} else if isSystemTx {
+				log.Info("current transaction is a system transaction", "hex", tx.Hash().Hex(), "to", tx.To().Hex(), "value", tx.Value().String())
 				systemTxs = append(systemTxs, tx)
 				continue
 			}
@@ -132,6 +148,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			bloomProcessors.Close()
 			return statedb, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
+
 		commonTxs = append(commonTxs, tx)
 		receipts = append(receipts, receipt)
 	}
@@ -159,6 +176,7 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 	// Create a new context to be used in the EVM environment.
 	txContext := NewEVMTxContext(msg)
 	evm.Reset(txContext, statedb)
+	statedb.Snapshot()
 
 	// Apply the transaction to the current state (included in the env).
 	result, err := ApplyMessage(evm, msg, gp)
@@ -212,6 +230,7 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
 func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config, receiptProcessors ...ReceiptProcessor) (*types.Receipt, error) {
+	log.Info("StateProcessor.ApplyTransaction called")
 	msg, err := TransactionToMessage(tx, types.MakeSigner(config, header.Number, header.Time), header.BaseFee)
 	if err != nil {
 		return nil, err
