@@ -1,0 +1,34 @@
+version: '3.7'
+
+services:
+  bsc-geth:
+    build:
+      context: .
+      args:
+        TAG: v1.4.11
+    container_name: bsc-geth-dev
+    network_mode: host
+    volumes:
+      - /etc/bsc-geth-dev:/etc/bsc-geth-dev
+      - /data/bsc-geth-dev:/data/bsc-geth-dev
+    command:
+      - --port=23003
+      - --config=/etc/bsc-geth-dev/config.toml
+      - --datadir=/data/bsc-geth-dev
+      - --cache=8192
+      - --rpc.allow-unprotected-txs
+      - --tries-verify-mode=local
+      - --syncmode=full
+      - --db.engine=pebble
+      - --metrics
+      - --metrics.addr=127.0.0.1
+      - --metrics.port=26060
+      - --graphql
+      - --http
+      - --http.addr=127.0.0.1
+      - --http.port=28545
+      - --ws
+      - --ws.addr=127.0.0.1
+      - --ws.port=28546
+      - --history.state=0
+      - --history.transactions=90000
